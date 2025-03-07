@@ -137,8 +137,9 @@ export class SystemdCoredumpManager {
   
   /**
    * List all available coredumps
+   * @param onlyPresent When true, only returns coredumps with COREFILE=="present"
    */
-  async listCoredumps(): Promise<CoreDumpInfo[]> {
+  async listCoredumps(onlyPresent: boolean = false): Promise<CoreDumpInfo[]> {
     try {
       const { stdout } = await execa('coredumpctl', ['list', '--no-legend']);
       
@@ -165,10 +166,22 @@ export class SystemdCoredumpManager {
         parts.pop();
         
         // Now we need to find key positions in the remaining parts
-        // Find the position of "present" in COREFILE column
-        // Only include dumps where COREFILE is "present"
-        const corefileIndex = parts.indexOf("present");
-        if (corefileIndex === -1) continue; // Skip if COREFILE is not "present"
+        // Find the position of "present" or "missing" in COREFILE column
+        let corefileIndex = parts.indexOf("present");
+        let isPresent = corefileIndex !== -1;
+        
+        if (!isPresent) {
+          corefileIndex = parts.indexOf("missing");
+          if (corefileIndex === -1) {
+            // Skip if COREFILE is neither "present" nor "missing"
+            continue;
+          }
+        }
+        
+        // Skip if onlyPresent is true and COREFILE is not "present"
+        if (onlyPresent && !isPresent) {
+          continue;
+        }
         
         // We know SIGNAL is right before COREFILE status
         const signalIndex = corefileIndex - 1;
@@ -462,38 +475,113 @@ const server = new Server(
  * - A coredump:// URI scheme
  * - JSON MIME type
  * - Human readable name and description
+ * 
+ * Also provides stack traces as resources with:
+ * - A stacktrace:// URI scheme
+ * - Text MIME type
+ * - Human readable name and description
+ * 
+ * Only coredumps with COREFILE=="present" are provided as resources
  */
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
-  const dumps = await coredumpManager.listCoredumps();
+  // Only get coredumps with COREFILE=="present"
+  const dumps = await coredumpManager.listCoredumps(true);
+  
+  // Create resources for both coredumps and stack traces
+  const coredumpResources = dumps.map(dump => ({
+    uri: `coredump:///${dump.id}`,
+    mimeType: "application/json",
+    name: `Coredump ${dump.pid} (${dump.exe})`,
+    description: `Core dump from ${dump.exe} (PID ${dump.pid}) at ${dump.timestamp}`
+  }));
+  
+  const stacktraceResources = dumps.map(dump => ({
+    uri: `stacktrace:///${dump.id}`,
+    mimeType: "text/plain",
+    name: `Stack trace ${dump.pid} (${dump.exe})`,
+    description: `Stack trace from ${dump.exe} (PID ${dump.pid}) at ${dump.timestamp}`
+  }));
   
   return {
-    resources: dumps.map(dump => ({
-      uri: `coredump:///${dump.id}`,
-      mimeType: "application/json",
-      name: `Coredump ${dump.pid} (${dump.exe})`,
-      description: `Core dump from ${dump.exe} (PID ${dump.pid}) at ${dump.timestamp}`
-    }))
+    resources: [...coredumpResources, ...stacktraceResources]
   };
 });
 
 /**
- * Handler for reading coredump information.
- * Takes a coredump:// URI and returns the detailed info as JSON.
+ * Handler for reading coredump information and stack traces.
+ * Takes a coredump:// or stacktrace:// URI and returns the appropriate information.
  */
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const url = new URL(request.params.uri);
   // Make sure to decode the URL-encoded characters in the ID
   const id = decodeURIComponent(url.pathname.replace(/^\//, ''));
   
-  const coredumpInfo = await coredumpManager.getCoredumpInfo(id);
-  
-  return {
-    contents: [{
-      uri: request.params.uri,
-      mimeType: "application/json",
-      text: JSON.stringify(coredumpInfo, null, 2)
-    }]
-  };
+  if (request.params.uri.startsWith('coredump://')) {
+    // Handle coredump resources
+    const coredumpInfo = await coredumpManager.getCoredumpInfo(id);
+    
+    return {
+      contents: [{
+        uri: request.params.uri,
+        mimeType: "application/json",
+        text: JSON.stringify(coredumpInfo, null, 2)
+      }]
+    };
+  } else if (request.params.uri.startsWith('stacktrace://')) {
+    // Handle stacktrace resources
+    try {
+      const stacktrace = await coredumpManager.getStackTrace(id);
+      
+      // Format the stack trace into a readable form
+      let formattedOutput = `Stack trace for coredump ${id}\n`;
+      formattedOutput += `Signal: ${stacktrace.signal}\n\n`;
+      
+      stacktrace.frames.forEach(frame => {
+        let frameOutput = `#${frame.index} `;
+        
+        if (frame.address) {
+          frameOutput += `${frame.address} `;
+        }
+        
+        if (frame.function) {
+          frameOutput += `in ${frame.function} `;
+        }
+        
+        if (frame.args) {
+          frameOutput += `(${frame.args}) `;
+        }
+        
+        if (frame.location) {
+          frameOutput += `at ${frame.location}`;
+          
+          if (frame.line) {
+            frameOutput += `:${frame.line}`;
+          }
+        }
+        
+        formattedOutput += frameOutput + '\n';
+      });
+      
+      return {
+        contents: [{
+          uri: request.params.uri,
+          mimeType: "text/plain",
+          text: formattedOutput
+        }]
+      };
+    } catch (error) {
+      console.error(`Error getting stack trace for ${id}:`, error);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to get stack trace: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  } else {
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      `Unknown resource URI scheme: ${request.params.uri}`
+    );
+  }
 });
 
 /**
@@ -504,10 +592,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "list_coredumps",
-        description: "List all available coredumps in the system",
+        description: "List available coredumps in the system",
         inputSchema: {
           type: "object",
-          properties: {},
+          properties: {
+            onlyPresent: {
+              type: "boolean",
+              description: "When true, only returns coredumps with COREFILE=='present'"
+            }
+          },
           required: []
         }
       },
@@ -591,7 +684,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   switch (request.params.name) {
     case "list_coredumps": {
-      const dumps = await coredumpManager.listCoredumps();
+      const onlyPresent = Boolean(request.params.arguments?.onlyPresent);
+      const dumps = await coredumpManager.listCoredumps(onlyPresent);
       
       return {
         content: [{
