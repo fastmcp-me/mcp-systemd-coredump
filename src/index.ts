@@ -135,13 +135,10 @@ class SystemdCoredumpManager {
         const parts = line.trim().split(/\s+/);
         if (parts.length < 7) continue;
         
-        // Find the position of "missing" or "present" (COREFILE)
-        let corefileIndex = parts.indexOf("missing");
-        if (corefileIndex === -1) {
-          // If "missing" isn't found, try looking for "present"
-          corefileIndex = parts.indexOf("present");
-          if (corefileIndex === -1) continue;
-        }
+        // Find the position of "present" in COREFILE column
+        // Only include dumps where COREFILE is "present"
+        const corefileIndex = parts.indexOf("present");
+        if (corefileIndex === -1) continue; // Skip if COREFILE is not "present"
         
         // We know SIGNAL is right before "missing"/"present"
         const signalIndex = corefileIndex - 1;
