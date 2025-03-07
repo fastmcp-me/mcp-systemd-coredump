@@ -130,18 +130,39 @@ class SystemdCoredumpManager {
         if (!line.trim()) continue;
         
         // Parse the line - format is typically:
-        // TIME                      PID   UID   GID SIG COREFILE EXE
+        // TIME                            PID  UID  GID SIG     COREFILE EXE
+        // Sat 2023-06-17 01:50:45 JST    2465 1000  100 SIGABRT missing  /usr/bin/cuteime
         const parts = line.trim().split(/\s+/);
         if (parts.length < 7) continue;
         
-        // Extract parts - this relies on coredumpctl output format
-        // May need adjustment based on actual output format
-        const timestamp = parts.slice(0, 2).join(' ');
-        const pid = parts[2];
-        const uid = parts[3];
-        const gid = parts[4];
-        const signal = parts[5];
-        const exe = parts.slice(7).join(' ');
+        // Find the position of "missing" or "present" (COREFILE)
+        let corefileIndex = parts.indexOf("missing");
+        if (corefileIndex === -1) {
+          // If "missing" isn't found, try looking for "present"
+          corefileIndex = parts.indexOf("present");
+          if (corefileIndex === -1) continue;
+        }
+        
+        // We know SIGNAL is right before "missing"/"present"
+        const signalIndex = corefileIndex - 1;
+        // GID is before SIGNAL
+        const gidIndex = signalIndex - 1;
+        // UID is before GID
+        const uidIndex = gidIndex - 1;
+        // PID is before UID
+        const pidIndex = uidIndex - 1;
+        
+        // Extract values based on their position relative to COREFILE
+        const pid = parts[pidIndex];
+        const uid = parts[uidIndex];
+        const gid = parts[gidIndex];
+        const signal = parts[signalIndex];
+        
+        // Everything before the pid is the timestamp
+        const timestamp = parts.slice(0, pidIndex).join(' ');
+        
+        // Everything after the COREFILE is the executable name
+        const exe = parts.slice(corefileIndex + 1).join(' ');
         
         const id = `${timestamp}-${pid}`;
         const dumpInfo: CoreDumpInfo = {
