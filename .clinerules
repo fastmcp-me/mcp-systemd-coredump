@@ -8,6 +8,16 @@
 
 3. Let coredumpctl handle missing files appropriately at its level rather than adding our own validation layer.
 
+4. When using the JSON output from coredumpctl (--json=pretty), be aware that the format is not standard JSON:
+   - It lacks commas between objects in the array
+   - Property names are not quoted
+   - The JSON needs to be preprocessed before parsing
+
+5. For processing coredumpctl JSON output, implement a robust parsing strategy:
+   - First try to correct the format by adding commas and fixing array delimiters
+   - Have a fallback mechanism to parse individual objects if correction fails
+   - Handle numeric signal values (e.g., 6 for SIGABRT, 11 for SIGSEGV) appropriately
+
 ## Error Handling
 
 1. When using extractCoredump, the errors from coredumpctl are descriptive enough to bubble up to the user.

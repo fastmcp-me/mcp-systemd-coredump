@@ -141,79 +141,99 @@ export class SystemdCoredumpManager {
    */
   async listCoredumps(onlyPresent: boolean = false): Promise<CoreDumpInfo[]> {
     try {
-      const { stdout } = await execa('coredumpctl', ['list', '--no-legend']);
+      // Get JSON output from coredumpctl
+      const { stdout } = await execa('coredumpctl', ['list', '--json=pretty']);
       
-      // Parse the output
+      // Parse the JSON - first fix the format issues
       this.coredumps.clear();
       const dumps: CoreDumpInfo[] = [];
       
-      const lines = stdout.trim().split('\n');
-      for (const line of lines) {
-        if (!line.trim()) continue;
+      // The JSON output from coredumpctl is not valid JSON because it lacks commas between objects
+      // Clean up the JSON format
+      let entries: any[] = [];
+      try {
+        // Fix JSON formatting issues by adding commas between objects
+        const correctedJson = stdout
+          .replace(/\}\s*\{/g, '},{')  // Add commas between objects
+          .replace(/\}\s*\]/g, '}]')   // Fix end of array
+          .replace(/\[\s*\{/, '[{');   // Fix start of array
         
-        // Parse the line - format is typically:
-        // TIME                            PID  UID  GID SIG     COREFILE EXE
-        // Sat 2023-06-17 01:50:45 JST    2465 1000  100 SIGABRT missing  /usr/bin/cuteime
-        const parts = line.trim().split(/\s+/);
-        if (parts.length < 7) continue;
+        // Parse the corrected JSON
+        const jsonData = JSON.parse(correctedJson);
         
-        // The format is typically:
-        // TIME                            PID  UID  GID SIG COREFILE EXE SIZE
-        // Example: Sat 2023-06-17 01:50:45 JST 2465 1000 100 SIGABRT present /usr/bin/app 1.5M
+        // Filter entries by corefile status if onlyPresent is true
+        entries = onlyPresent 
+          ? jsonData.filter((entry: any) => entry.corefile === "present") 
+          : jsonData;
+      } catch (parseError) {
+        console.error('Error parsing coredumpctl JSON:', parseError);
         
-        // The last part is the size (e.g., "1.5M") and should be ignored per user request
-        // Remove the last part (size)
-        parts.pop();
-        
-        // Now we need to find key positions in the remaining parts
-        // Find the position of "present" or "missing" in COREFILE column
-        let corefileIndex = parts.indexOf("present");
-        let isPresent = corefileIndex !== -1;
-        
-        if (!isPresent) {
-          corefileIndex = parts.indexOf("missing");
-          if (corefileIndex === -1) {
-            // Skip if COREFILE is neither "present" nor "missing"
-            continue;
+        // Fallback to object-by-object parsing
+        try {
+          // Extract individual JSON objects
+          const objectMatches = stdout.match(/\{[^{}]*\}/g) || [];
+          
+          // Parse each object and collect entries
+          const allEntries = [];
+          for (const objStr of objectMatches) {
+            try {
+              // Clean up the object string and add missing quotes to property names
+              const cleanStr = objStr
+                .replace(/\n/g, ' ')
+                .replace(/\t/g, ' ')
+                .replace(/\s+/g, ' ');
+              
+              const fixedStr = cleanStr.replace(/([{,]\s*)([a-zA-Z_][a-zA-Z0-9_]*)\s*:/g, '$1"$2":');
+              
+              allEntries.push(JSON.parse(fixedStr));
+            } catch (e) {
+              // Silently skip objects that can't be parsed
+            }
           }
+          
+          // Apply filtering
+          entries = onlyPresent 
+            ? allEntries.filter(entry => entry.corefile === "present") 
+            : allEntries;
+        } catch (fallbackError) {
+          throw new McpError(
+            ErrorCode.InternalError,
+            `Failed to parse coredumpctl output: ${fallbackError instanceof Error ? fallbackError.message : String(fallbackError)}`
+          );
+        }
+      }
+      
+      // Convert to our CoreDumpInfo format
+      for (const entry of entries) {
+        // Convert time (microseconds since epoch) to a human-readable timestamp
+        const date = new Date(entry.time / 1000); // Convert microseconds to milliseconds
+        const timestamp = date.toLocaleString();
+        
+        // Create the id from timestamp and pid
+        const id = `${timestamp}-${entry.pid}`;
+        
+        // Signal value comes in numeric form in JSON output, convert to string representation
+        // sig value is numeric (e.g., 11 for SIGSEGV, 6 for SIGABRT)
+        let signalName;
+        switch (entry.sig) {
+          case 6: signalName = "SIGABRT"; break;
+          case 11: signalName = "SIGSEGV"; break;
+          case 4: signalName = "SIGILL"; break;
+          case 5: signalName = "SIGTRAP"; break;
+          case 8: signalName = "SIGFPE"; break;
+          case 9: signalName = "SIGKILL"; break;
+          default: signalName = `SIG${entry.sig}`;
         }
         
-        // Skip if onlyPresent is true and COREFILE is not "present"
-        if (onlyPresent && !isPresent) {
-          continue;
-        }
-        
-        // We know SIGNAL is right before COREFILE status
-        const signalIndex = corefileIndex - 1;
-        // GID is before SIGNAL
-        const gidIndex = signalIndex - 1;
-        // UID is before GID
-        const uidIndex = gidIndex - 1;
-        // PID is before UID
-        const pidIndex = uidIndex - 1;
-        
-        // Extract values based on their positions
-        const pid = parts[pidIndex];
-        const uid = parts[uidIndex];
-        const gid = parts[gidIndex];
-        const signal = parts[signalIndex];
-        
-        // Everything before the pid is the timestamp
-        const timestamp = parts.slice(0, pidIndex).join(' ');
-        
-        // Everything after the COREFILE status is the executable name
-        const exe = parts.slice(corefileIndex + 1).join(' ');
-        
-        const id = `${timestamp}-${pid}`;
         const dumpInfo: CoreDumpInfo = {
           id,
-          pid,
-          uid,
-          gid,
-          signal,
+          pid: entry.pid.toString(),
+          uid: entry.uid.toString(),
+          gid: entry.gid.toString(),
+          signal: signalName,
           timestamp,
           cmdline: '', // Will be populated in getCoredumpInfo if needed
-          exe,
+          exe: entry.exe,
           hostname: '', // Will be populated in getCoredumpInfo if needed
         };
         
