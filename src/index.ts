@@ -135,12 +135,21 @@ class SystemdCoredumpManager {
         const parts = line.trim().split(/\s+/);
         if (parts.length < 7) continue;
         
+        // The format is typically:
+        // TIME                            PID  UID  GID SIG COREFILE EXE SIZE
+        // Example: Sat 2023-06-17 01:50:45 JST 2465 1000 100 SIGABRT present /usr/bin/app 1.5M
+        
+        // The last part is the size (e.g., "1.5M") and should be ignored per user request
+        // Remove the last part (size)
+        parts.pop();
+        
+        // Now we need to find key positions in the remaining parts
         // Find the position of "present" in COREFILE column
         // Only include dumps where COREFILE is "present"
         const corefileIndex = parts.indexOf("present");
         if (corefileIndex === -1) continue; // Skip if COREFILE is not "present"
         
-        // We know SIGNAL is right before "missing"/"present"
+        // We know SIGNAL is right before COREFILE status
         const signalIndex = corefileIndex - 1;
         // GID is before SIGNAL
         const gidIndex = signalIndex - 1;
@@ -149,7 +158,7 @@ class SystemdCoredumpManager {
         // PID is before UID
         const pidIndex = uidIndex - 1;
         
-        // Extract values based on their position relative to COREFILE
+        // Extract values based on their positions
         const pid = parts[pidIndex];
         const uid = parts[uidIndex];
         const gid = parts[gidIndex];
@@ -158,7 +167,7 @@ class SystemdCoredumpManager {
         // Everything before the pid is the timestamp
         const timestamp = parts.slice(0, pidIndex).join(' ');
         
-        // Everything after the COREFILE is the executable name
+        // Everything after the COREFILE status is the executable name
         const exe = parts.slice(corefileIndex + 1).join(' ');
         
         const id = `${timestamp}-${pid}`;
@@ -405,20 +414,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "remove_coredump",
-        description: "Remove a coredump from the system",
-        inputSchema: {
-          type: "object",
-          properties: {
-            id: {
-              type: "string",
-              description: "ID of the coredump"
-            }
-          },
-          required: ["id"]
-        }
-      },
-      {
         name: "get_coredump_config",
         description: "Get the current core dump configuration of the system",
         inputSchema: {
@@ -498,26 +493,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: [{
           type: "text",
           text: `Coredump extracted to: ${path}`
-        }]
-      };
-    }
-    
-    case "remove_coredump": {
-      const id = String(request.params.arguments?.id);
-      
-      if (!id) {
-        throw new McpError(
-          ErrorCode.InvalidParams,
-          "Coredump ID is required"
-        );
-      }
-      
-      const removed = await coredumpManager.removeCoredump(id);
-      
-      return {
-        content: [{
-          type: "text",
-          text: removed ? `Coredump ${id} removed successfully` : `Failed to remove coredump ${id}`
         }]
       };
     }
