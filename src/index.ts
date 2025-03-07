@@ -482,7 +482,8 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
  */
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const url = new URL(request.params.uri);
-  const id = url.pathname.replace(/^\//, '');
+  // Make sure to decode the URL-encoded characters in the ID
+  const id = decodeURIComponent(url.pathname.replace(/^\//, ''));
   
   const coredumpInfo = await coredumpManager.getCoredumpInfo(id);
   
@@ -609,7 +610,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
       
-      const info = await coredumpManager.getCoredumpInfo(id);
+      // Make sure to decode the URL-encoded characters in the ID
+      const decodedId = decodeURIComponent(id);
+      const info = await coredumpManager.getCoredumpInfo(decodedId);
       
       return {
         content: [{
@@ -630,7 +633,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         );
       }
       
-      const path = await coredumpManager.extractCoredump(id, outputPath);
+      // Make sure to decode the URL-encoded characters in the ID
+      const decodedId = decodeURIComponent(id);
+      const path = await coredumpManager.extractCoredump(decodedId, outputPath);
       
       return {
         content: [{
@@ -682,7 +687,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
       
       try {
-        const stacktrace = await coredumpManager.getStackTrace(id);
+        // Make sure to decode the URL-encoded characters in the ID
+        const decodedId = decodeURIComponent(id);
+        const stacktrace = await coredumpManager.getStackTrace(decodedId);
         
         // Format the stack trace into a more readable form
         let formattedOutput = `Stack trace for coredump ${id}\n`;
