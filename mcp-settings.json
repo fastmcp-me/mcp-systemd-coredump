@@ -1,0 +1,40 @@
+{
+  "mcpServers": {
+    "VNC Client": {
+      "command": "/home/tasuku/com/gitlab/signal-slot/labs/vncmcpserver/build/SDK_Qt_6-Debug/vncmcpserverapp",
+      "args": [],
+      "disabled": false,
+      "alwaysAllow": [
+        "list_tools"
+      ],
+      "env": {
+        "DISPLAY": ":0",
+        "QTDIR": "/home/tasuku/io/qt/release/6.8.2/gcc_64",
+        "LD_LIBRARY_PATH": "/home/tasuku/io/qt/release/6.8.2/gcc_64/lib",
+        "HOME": "/home/tasuku"
+      }
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/git": {
+      "command": "uvx",
+      "args": ["mcp-server-git"],
+      "disabled": false,
+      "autoApprove": []
+    },
+    "github.com/modelcontextprotocol/servers/tree/main/src/puppeteer": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-puppeteer"],
+      "disabled": false,
+      "autoApprove": [],
+      "env": {
+        "DISPLAY": ":0",
+        "HOME": "/home/tasuku"
+      }
+    },
+    "systemd-coredump": {
+      "command": "node",
+      "args": ["/home/tasuku/com/github/signal-slot/mcp-systemd-coredump/systemd-coredump-server/build/index.js"],
+      "disabled": false,
+      "autoApprove": []
+    }
+  }
+}
