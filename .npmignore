@@ -1,0 +1,33 @@
+# Development and source files
+src/
+*.ts
+tsconfig.json
+
+# Git files
+.git/
+.gitignore
+
+# Test files
+test*.js
+verify*.sh
+direct-test.js
+stacktrace-direct-test.js
+crash/
+generate-test-coredump.c
+test-output.txt
+
+# Configuration for local testing
+mcp-settings.json
+example-usage.sh
+
+# Editor files
+.vscode/
+*.swp
+*.swo
+
+# Not needed for distribution
+README.md
+.clinerules
+PUBLISHING.md
+verify-npm-package.js
+modelcontextprotocol-server-systemd-coredump-*.tgz

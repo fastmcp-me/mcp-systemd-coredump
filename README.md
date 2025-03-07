@@ -1,6 +1,9 @@
 # systemd-coredump MCP Server
 
-This MCP server provides an interface to interact with the systemd-coredump functionality via Model Context Protocol (MCP). It enables applications that support MCP to access, manage, and analyze system core dumps.
+A Model Context Protocol (MCP) server for interacting with systemd-coredump functionality. This enables MCP-capable applications to access, manage, and analyze system core dumps.
+
+[![npm version](https://img.shields.io/npm/v/@taskjp/server-systemd-coredump.svg?v=0.1.1)](https://www.npmjs.com/package/@taskjp/server-systemd-coredump)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 ## Features
 
@@ -17,6 +20,22 @@ This MCP server provides an interface to interact with the systemd-coredump func
 
 ## Installation
 
+### From npm (recommended)
+
+#### Global Installation
+
+```bash
+npm install -g @taskjp/server-systemd-coredump
+```
+
+#### Local Installation
+
+```bash
+npm install @taskjp/server-systemd-coredump
+```
+
+### From Source
+
 1. Clone the repository or download the source code
 2. Install dependencies:
 
@@ -31,7 +50,33 @@ npm install
 npm run build
 ```
 
-4. Configure the MCP server by adding the following to your MCP settings configuration file:
+## Configuration
+
+Add the server to your MCP settings configuration file:
+
+### If installed from npm globally:
+
+```json
+"systemd-coredump": {
+  "command": "systemd-coredump-server",
+  "args": [],
+  "disabled": false,
+  "autoApprove": []
+}
+```
+
+### If installed from npm locally:
+
+```json
+"systemd-coredump": {
+  "command": "node",
+  "args": ["node_modules/@taskjp/server-systemd-coredump/build/index.js"],
+  "disabled": false,
+  "autoApprove": []
+}
+```
+
+### If installed from source:
 
 ```json
 "systemd-coredump": {
@@ -119,13 +164,31 @@ The server provides the following tools:
    Note: This changes the ulimit settings for the current shell. For permanent system-wide
    changes, root privileges and modification of system configuration files would be required.
 
+7. **get_stacktrace**: Get stack trace from a coredump using GDB
+
+   ```json
+   {
+     "name": "get_stacktrace",
+     "arguments": {
+       "id": "2023-04-20 12:34:56-12345"
+     }
+   }
+   ```
+
+   This tool uses GDB to extract a formatted stack trace from the coredump.
+   Note: Requires the GDB debugger to be installed on the system.
+
 ### Available Resources
 
-The server exposes coredumps as resources with the following URI format:
+The server exposes two types of resources:
 
-```
-coredump:///<id>
-```
+1. **Coredump Information**
+   - URI format: `coredump:///<id>`
+   - Returns JSON with detailed coredump information
+
+2. **Stack Traces**
+   - URI format: `stacktrace:///<id>`
+   - Returns a formatted stack trace from the coredump
 
 Where `<id>` is the unique identifier for a coredump in the format: `<timestamp>-<pid>`.
 
@@ -133,6 +196,7 @@ For example:
 
 ```
 coredump:///2023-04-20 12:34:56-12345
+stacktrace:///2023-04-20 12:34:56-12345
 ```
 
 ## Note on Permissions
