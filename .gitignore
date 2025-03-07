@@ -1,5 +1,16 @@
-!.clinerules
-node_modules/
+# Build artifacts
+*.tgz
 build/
-*.log
-.env*
+
+# Editor temporary files
+.*.swp
+.*.swo
+*~
+
+# Runtime files
+crash/
+test-output.txt
+
+# Node.js
+node_modules/
+npm-debug.log
