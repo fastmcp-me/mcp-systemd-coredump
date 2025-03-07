@@ -1,0 +1,31 @@
+# Systemd-Coredump MCP Server Rules
+
+## Core Dump Handling
+
+1. When working with systemd coredumps, use the `COREFILE=="present"` filter to only work with coredumps that have actual files available.
+
+2. Do not add additional validation for "(missing)" files in the operational methods - this causes cascading errors. The system already has built-in validation.
+
+3. Let coredumpctl handle missing files appropriately at its level rather than adding our own validation layer.
+
+## Error Handling
+
+1. When using extractCoredump, the errors from coredumpctl are descriptive enough to bubble up to the user.
+
+2. Avoid complex nesting of try/catch blocks when handling system operations - simplify the error flow.
+
+## MCP Resource Design
+
+1. Filter resources at the listing level (ListResourcesRequestSchema handler) rather than trying to validate each resource separately.
+
+2. Provide clear parameter documentation for filter options like `onlyPresent`.
+
+3. Make filtering optional in tools (to allow viewing all entries) but enforced for resources (to avoid broken resources).
+
+## Code Maintenance
+
+1. When working with complex file processing through tools like `replace_in_file`, take care to avoid file corruption.
+
+2. If file corruption occurs, it's better to rewrite the entire file with `write_to_file` rather than attempting to fix with more replacements.
+
+3. Use a systematic approach when updating multiple parts of a file to avoid mistakes.

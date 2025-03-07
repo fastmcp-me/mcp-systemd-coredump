@@ -1,3 +1,4 @@
+!.clinerules
 node_modules/
 build/
 *.log
