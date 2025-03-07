@@ -40,6 +40,81 @@ class SystemdCoredumpManager {
   private coredumps: Map<string, CoreDumpInfo> = new Map();
   
   /**
+   * Get the system's core dump configuration
+   * Checks core_pattern file and ulimit settings
+   */
+  async getCoreDumpConfig(): Promise<{
+    enabled: boolean;
+    corePattern: string;
+    coreSizeLimit: string;
+    systemdHandled: boolean;
+  }> {
+    try {
+      // Check core_pattern in procfs
+      const { stdout: corePattern } = await execa('cat', ['/proc/sys/kernel/core_pattern']);
+      
+      // Check ulimit setting for current shell
+      const { stdout: ulimitOutput } = await execa('bash', ['-c', 'ulimit -c']);
+      
+      // Determine if core dumps are enabled
+      const coreSizeLimit = ulimitOutput.trim();
+      const systemdHandled = corePattern.trim().startsWith('|') && 
+                            corePattern.includes('systemd-coredump');
+      
+      // Core dumps are enabled if the core size limit is not 0 and either:
+      // 1. A direct file pattern is configured, or
+      // 2. systemd-coredump handler is configured
+      const enabled = coreSizeLimit !== '0' && 
+                     (systemdHandled || (!corePattern.trim().startsWith('|')));
+      
+      return {
+        enabled,
+        corePattern: corePattern.trim(),
+        coreSizeLimit,
+        systemdHandled
+      };
+    } catch (error) {
+      console.error('Error getting core dump configuration:', error);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to get core dump configuration: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  
+  /**
+   * Enable or disable core dump generation
+   */
+  async setCoreDumpEnabled(enabled: boolean): Promise<boolean> {
+    try {
+      const currentConfig = await this.getCoreDumpConfig();
+      
+      // Set core size limit using ulimit
+      // This requires sudo for system-wide configuration
+      // Or can be done in user's shell for user-level configuration
+      const limitValue = enabled ? 'unlimited' : '0';
+      await execa('bash', ['-c', `ulimit -c ${limitValue}`]);
+      
+      // Also set the soft limit in current shell
+      await execa('bash', ['-c', `ulimit -S -c ${limitValue}`]);
+      
+      // Verify the change
+      const newConfig = await this.getCoreDumpConfig();
+      
+      // For system-wide permanent configuration, we'd ideally update 
+      // /etc/security/limits.conf, but that requires root privileges
+      // Here we just return if our immediate change was successful
+      return newConfig.enabled === enabled;
+    } catch (error) {
+      console.error('Error setting core dump enabled:', error);
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to ${enabled ? 'enable' : 'disable'} core dumps: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
+  
+  /**
    * List all available coredumps
    */
   async listCoredumps(): Promise<CoreDumpInfo[]> {
@@ -324,6 +399,29 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["id"]
         }
+      },
+      {
+        name: "get_coredump_config",
+        description: "Get the current core dump configuration of the system",
+        inputSchema: {
+          type: "object",
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: "set_coredump_enabled",
+        description: "Enable or disable core dump generation",
+        inputSchema: {
+          type: "object",
+          properties: {
+            enabled: {
+              type: "boolean",
+              description: "Whether to enable (true) or disable (false) core dumps"
+            }
+          },
+          required: ["enabled"]
+        }
       }
     ]
   };
@@ -402,6 +500,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         content: [{
           type: "text",
           text: removed ? `Coredump ${id} removed successfully` : `Failed to remove coredump ${id}`
+        }]
+      };
+    }
+    
+    case "get_coredump_config": {
+      const config = await coredumpManager.getCoreDumpConfig();
+      
+      return {
+        content: [{
+          type: "text",
+          text: JSON.stringify({
+            enabled: config.enabled,
+            corePattern: config.corePattern,
+            coreSizeLimit: config.coreSizeLimit,
+            systemdHandled: config.systemdHandled,
+            message: `Core dumps are currently ${config.enabled ? 'ENABLED' : 'DISABLED'}`
+          }, null, 2)
+        }]
+      };
+    }
+    
+    case "set_coredump_enabled": {
+      const enabled = Boolean(request.params.arguments?.enabled);
+      
+      const success = await coredumpManager.setCoreDumpEnabled(enabled);
+      
+      return {
+        content: [{
+          type: "text",
+          text: success 
+            ? `Core dumps have been successfully ${enabled ? 'enabled' : 'disabled'}`
+            : `Failed to ${enabled ? 'enable' : 'disable'} core dumps`
         }]
       };
     }

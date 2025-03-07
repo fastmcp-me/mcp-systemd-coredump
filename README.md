@@ -90,6 +90,35 @@ The server provides the following tools:
    }
    ```
 
+5. **get_coredump_config**: Get the current core dump configuration of the system
+
+   ```json
+   {
+     "name": "get_coredump_config"
+   }
+   ```
+
+   This tool returns information about the current core dump configuration, including:
+   - Whether core dumps are enabled
+   - The current core pattern
+   - The core size limit
+   - Whether systemd is handling the core dumps
+
+6. **set_coredump_enabled**: Enable or disable core dump generation
+
+   ```json
+   {
+     "name": "set_coredump_enabled",
+     "arguments": {
+       "enabled": true
+     }
+   }
+   ```
+
+   Setting `enabled` to `true` will enable core dumps, while `false` will disable them.
+   Note: This changes the ulimit settings for the current shell. For permanent system-wide
+   changes, root privileges and modification of system configuration files would be required.
+
 ### Available Resources
 
 The server exposes coredumps as resources with the following URI format:
