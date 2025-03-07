@@ -34,9 +34,30 @@ interface CoreDumpInfo {
 }
 
 /**
+ * Interface for stacktrace information
+ */
+interface StackTraceInfo {
+  frames: StackFrame[];
+  threadId?: string;
+  signal?: string;
+}
+
+/**
+ * Interface for a single stack frame
+ */
+interface StackFrame {
+  index: number;
+  address?: string;
+  function?: string;
+  location?: string;
+  line?: string;
+  args?: string;
+}
+
+/**
  * Class to interact with systemd-coredump
  */
-class SystemdCoredumpManager {
+export class SystemdCoredumpManager {
   private coredumps: Map<string, CoreDumpInfo> = new Map();
   
   /**
@@ -307,6 +328,114 @@ class SystemdCoredumpManager {
       );
     }
   }
+
+  /**
+   * Get stack trace from a coredump using GDB
+   */
+  async getStackTrace(id: string): Promise<StackTraceInfo> {
+    if (!this.coredumps.has(id)) {
+      await this.listCoredumps();
+      
+      if (!this.coredumps.has(id)) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          `Coredump with ID ${id} not found`
+        );
+      }
+    }
+    
+    const coredump = this.coredumps.get(id)!;
+    let tempCorePath: string | null = null;
+    
+    try {
+      // We need to extract the coredump first if not already extracted
+      if (!coredump.coredump) {
+        const tempDir = '/tmp';
+        tempCorePath = `${tempDir}/core-${coredump.pid}-temp.dump`;
+        await this.extractCoredump(id, tempCorePath);
+        coredump.coredump = tempCorePath;
+      }
+      
+      // Create GDB command file for batch execution
+      const gdbCommands = [
+        'set pagination off',
+        'thread apply all bt full',
+        'quit'
+      ];
+      
+      const gdbCommandFile = '/tmp/gdb-commands.txt';
+      await execa('bash', ['-c', `echo "${gdbCommands.join('\n')}" > ${gdbCommandFile}`]);
+
+      // Run GDB to get stack trace
+      const { stdout } = await execa('gdb', [
+        '-q',                  // Quiet mode
+        '-batch',              // Batch mode
+        '-x', gdbCommandFile,  // Command file
+        '--nx',                // Don't read .gdbinit
+        coredump.exe,          // Executable
+        coredump.coredump      // Core dump file
+      ]);
+      
+      // Parse the stacktrace output
+      const frames: StackFrame[] = [];
+      let currentThreadId: string | undefined;
+      
+      // Process the GDB output 
+      const lines = stdout.split('\n');
+      
+      for (const line of lines) {
+        // Look for thread information
+        const threadMatch = line.match(/^Thread (\d+) \(.*\):/);
+        if (threadMatch) {
+          currentThreadId = threadMatch[1];
+          continue;
+        }
+        
+        // Look for stack frames
+        // Example: "#0  0x00007f9b7c27d6b0 in __GI_raise (sig=sig@entry=6) at ../sysdeps/unix/sysv/linux/raise.c:50"
+        const frameMatch = line.match(/^#(\d+)\s+([0-9xa-f]+)? in ([^\(]+)\s*\(([^)]*)\)(?: at ([^:]+):(\d+))?/);
+        if (frameMatch) {
+          frames.push({
+            index: parseInt(frameMatch[1], 10),
+            address: frameMatch[2],
+            function: frameMatch[3].trim(),
+            args: frameMatch[4],
+            location: frameMatch[5],
+            line: frameMatch[6]
+          });
+        }
+      }
+      
+      // Clean up the temp files
+      if (tempCorePath) {
+        await execa('rm', ['-f', tempCorePath]);
+      }
+      await execa('rm', ['-f', gdbCommandFile]);
+      
+      // Return the stack trace info
+      return {
+        frames,
+        threadId: currentThreadId,
+        signal: coredump.signal
+      };
+    } catch (error) {
+      console.error(`Error getting stack trace for ${id}:`, error);
+      
+      // Clean up temp files on error too
+      if (tempCorePath) {
+        try {
+          await execa('rm', ['-f', tempCorePath]);
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+      }
+      
+      throw new McpError(
+        ErrorCode.InternalError,
+        `Failed to get stack trace: ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 }
 
 /**
@@ -435,6 +564,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["enabled"]
         }
+      },
+      {
+        name: "get_stacktrace",
+        description: "Get stack trace from a coredump using GDB",
+        inputSchema: {
+          type: "object",
+          properties: {
+            id: {
+              type: "string",
+              description: "ID of the coredump"
+            }
+          },
+          required: ["id"]
+        }
       }
     ]
   };
@@ -527,6 +670,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             : `Failed to ${enabled ? 'enable' : 'disable'} core dumps`
         }]
       };
+    }
+    
+    case "get_stacktrace": {
+      const id = String(request.params.arguments?.id);
+      if (!id) {
+        throw new McpError(
+          ErrorCode.InvalidParams,
+          "Coredump ID is required"
+        );
+      }
+      
+      try {
+        const stacktrace = await coredumpManager.getStackTrace(id);
+        
+        // Format the stack trace into a more readable form
+        let formattedOutput = `Stack trace for coredump ${id}\n`;
+        formattedOutput += `Signal: ${stacktrace.signal}\n\n`;
+        
+        stacktrace.frames.forEach(frame => {
+          let frameOutput = `#${frame.index} `;
+          
+          if (frame.address) {
+            frameOutput += `${frame.address} `;
+          }
+          
+          if (frame.function) {
+            frameOutput += `in ${frame.function} `;
+          }
+          
+          if (frame.args) {
+            frameOutput += `(${frame.args}) `;
+          }
+          
+          if (frame.location) {
+            frameOutput += `at ${frame.location}`;
+            
+            if (frame.line) {
+              frameOutput += `:${frame.line}`;
+            }
+          }
+          
+          formattedOutput += frameOutput + '\n';
+        });
+        
+        return {
+          content: [{
+            type: "text",
+            text: formattedOutput
+          }]
+        };
+      } catch (error) {
+        console.error(`Error in get_stacktrace for ${id}:`, error);
+        return {
+          content: [{
+            type: "text",
+            text: `Failed to get stack trace: ${error instanceof Error ? error.message : String(error)}`,
+          }],
+          isError: true
+        };
+      }
     }
     
     default:
